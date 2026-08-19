@@ -1,0 +1,2 @@
+# Mock mode needs nothing but Python 3.9+.
+openai>=1.0    # only for --provider openai
