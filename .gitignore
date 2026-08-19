@@ -5,3 +5,9 @@
 __pycache__/
 *.pyc
 .venv/
+
+# internal planning / notes — keep LOCAL, never publish
+PROJECT_PLAN.md
+EXPLAINER.md
+HOW_IT_WORKS.md
+TOP_TIER_PLAN.md
