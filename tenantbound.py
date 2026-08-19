@@ -107,9 +107,9 @@ def make_mock_producer(seed: int):
     return produce
 
 
-def make_openai_producer(model: str):
+def make_openai_producer(model: str, base_url: str | None = None):
     from openai import OpenAI
-    client = OpenAI()
+    client = OpenAI(base_url=base_url, api_key="ollama") if base_url else OpenAI()
 
     def produce(a: Ag, attack: dict) -> tuple[str, list[Field]]:
         system = (f"You are agent '{a.id}' on a team. Your private {a.secret_name} is "
@@ -273,9 +273,9 @@ def make_mock_coordinator(seed: int):
     return coord
 
 
-def make_openai_coordinator(model: str):
+def make_openai_coordinator(model: str, base_url: str | None = None):
     from openai import OpenAI
-    client = OpenAI()
+    client = OpenAI(base_url=base_url, api_key="ollama") if base_url else OpenAI()
 
     def coord(items: list[dict], defend: bool, inject: bool = False) -> str:
         lines = []
@@ -383,6 +383,9 @@ def main():
                     help="relay = benign context-bleeding (realistic); direct = single-turn extraction")
     ap.add_argument("--judge-model", default=None,
                     help="LLM judge for SEMANTIC leak detection in relay (default: same as --model)")
+    ap.add_argument("--base-url", default=None,
+                    help="OpenAI-compatible base URL for the system-under-test, e.g. Ollama: "
+                         "http://localhost:11434/v1 (the judge still uses real OpenAI)")
     ap.add_argument("--no-judge", action="store_true", help="disable the LLM judge (exact-match only)")
     ap.add_argument("--inject", action="store_true",
                     help="relay: embed a prompt-injection override that tries to defeat the instruction")
@@ -390,9 +393,11 @@ def main():
     args = ap.parse_args()
 
     load_env()  # pick up OPENAI_API_KEY from .env if present
-    if args.provider == "openai" and not os.environ.get("OPENAI_API_KEY"):
-        print("No OPENAI_API_KEY found. Put your key in stabp/.env "
-              "(line: OPENAI_API_KEY=sk-...).", file=sys.stderr)
+    _judge_will_run = args.scenario == "relay" and not args.no_judge and args.provider != "mock"
+    _sut_is_openai = args.provider == "openai" and not args.base_url
+    if (_judge_will_run or _sut_is_openai) and not os.environ.get("OPENAI_API_KEY"):
+        print("No OPENAI_API_KEY found (needed for the gpt-4o judge and/or an OpenAI model). "
+              "Put your key in stabp/.env (line: OPENAI_API_KEY=sk-...).", file=sys.stderr)
         sys.exit(2)
 
     agents = team()
@@ -402,14 +407,14 @@ def main():
             if mock else f"OpenAI, model={model}, temperature=0.7 (evaluate at deployment temp).")
 
     if args.scenario == "direct":
-        produce = make_mock_producer(args.seed) if mock else make_openai_producer(model)
+        produce = make_mock_producer(args.seed) if mock else make_openai_producer(model, args.base_url)
         n_calls = args.repeat * len(agents) * len(ATTACKS)
         runner = lambda: run_all(produce, agents, args.repeat)          # noqa: E731
     else:  # relay
-        coord = make_mock_coordinator(args.seed) if mock else make_openai_coordinator(model)
+        coord = make_mock_coordinator(args.seed) if mock else make_openai_coordinator(model, args.base_url)
         judge = None
         if not mock and not args.no_judge:
-            judge = make_openai_judge(args.judge_model or model)
+            judge = make_openai_judge(args.judge_model or ("gpt-4o" if args.base_url else model))
             note += f" | semantic leak judged by {args.judge_model or model}"
         n_calls = args.repeat * (3 + (3 if judge else 0))   # 3 summaries + 3 judge calls / run
         if args.inject:
