@@ -107,9 +107,13 @@ def make_mock_producer(seed: int):
     return produce
 
 
-def make_openai_producer(model: str, base_url: str | None = None):
+def make_openai_producer(model: str, base_url: str | None = None,
+                         api_key: str | None = None):
     from openai import OpenAI
-    client = OpenAI(base_url=base_url, api_key="ollama") if base_url else OpenAI()
+    # base_url set => OpenAI-compatible endpoint (Ollama/DeepSeek/Mistral).
+    # Ollama ignores the key; hosted endpoints need a real one (SUT_API_KEY).
+    client = (OpenAI(base_url=base_url, api_key=api_key or "ollama")
+              if base_url else OpenAI())
 
     def produce(a: Ag, attack: dict) -> tuple[str, list[Field]]:
         system = (f"You are agent '{a.id}' on a team. Your private {a.secret_name} is "
@@ -273,9 +277,11 @@ def make_mock_coordinator(seed: int):
     return coord
 
 
-def make_openai_coordinator(model: str, base_url: str | None = None):
+def make_openai_coordinator(model: str, base_url: str | None = None,
+                            api_key: str | None = None):
     from openai import OpenAI
-    client = OpenAI(base_url=base_url, api_key="ollama") if base_url else OpenAI()
+    client = (OpenAI(base_url=base_url, api_key=api_key or "ollama")
+              if base_url else OpenAI())
 
     def coord(items: list[dict], defend: bool, inject: bool = False) -> str:
         lines = []
@@ -403,15 +409,17 @@ def main():
     agents = team()
     mock = args.provider == "mock"
     model = "mock" if mock else (args.model or "gpt-4o-mini")
+    # Key for a hosted OpenAI-compatible SUT (DeepSeek/Mistral). Ollama ignores it.
+    sut_key = os.environ.get("SUT_API_KEY")
     note = ("MOCK MODE: synthetic agents. Mechanism + statistics demo, NOT real-LLM evidence."
             if mock else f"OpenAI, model={model}, temperature=0.7 (evaluate at deployment temp).")
 
     if args.scenario == "direct":
-        produce = make_mock_producer(args.seed) if mock else make_openai_producer(model, args.base_url)
+        produce = make_mock_producer(args.seed) if mock else make_openai_producer(model, args.base_url, sut_key)
         n_calls = args.repeat * len(agents) * len(ATTACKS)
         runner = lambda: run_all(produce, agents, args.repeat)          # noqa: E731
     else:  # relay
-        coord = make_mock_coordinator(args.seed) if mock else make_openai_coordinator(model, args.base_url)
+        coord = make_mock_coordinator(args.seed) if mock else make_openai_coordinator(model, args.base_url, sut_key)
         judge = None
         if not mock and not args.no_judge:
             judge = make_openai_judge(args.judge_model or ("gpt-4o" if args.base_url else model))
